@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Taxes API Test Front</title>
+    <style>
+        body {
+            font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+            padding: 20px;
+            margin: 0;
+            min-height: 100vh;
+            position: relative;
+
+            /* Фон */
+            background-image: url('fon-kopilka.jpeg');
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+        }
+
+        /* Полупрозрачная плашка поверх фона */
+        body::before {
+            content: "";
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255, 255, 255, 0.85);
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .content-wrapper {
+            position: relative;
+            z-index: 1;
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+
+        h1, h3 {
+            font-family: "Segoe UI Black", sans-serif;
+        }
+
+        .centered-title {
+            text-align: center;
+        }
+
+        /* Сетка как у карточек: две колонки */
+        .dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px 20px;
+            align-items: start;
+            margin-top: 20px;
+        }
+
+        .stack {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        /* Одинаковый стиль для всех карточек (баланс, выбор, сравнение, лог) */
+        .card {
+            border: 1px solid #ccc;
+            padding: 15px;
+            box-sizing: border-box;
+            background: white;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        button { margin-right: 8px; padding: 6px 12px; cursor: pointer; }
+        input, select { padding: 6px; }
+        input { width: 120px; }
+
+        /* Плашка лога — card, но с внутренним скроллом */
+        .log-block {
+            grid-column: span 1;
+            margin-top: 20px;
+        }
+
+        .log-block h3 {
+            text-align: left;
+            margin: 0 0 8px;
+            font-size: 1rem;
+        }
+
+        #log {
+            border: none;
+            padding: 0;
+            min-height: 100px;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            box-sizing: border-box;
+            color: #333;
+        }
+
+        #income-val, #charge-val, #profit-val {
+            font-family: "Segoe UI Black", sans-serif;
+            font-weight: normal;
+        }
+
+        @media (max-width: 720px) {
+            .dashboard { grid-template-columns: 1fr; }
+            .log-block { grid-column: span 1; } /* На мобильном тоже одна колонка */
+        }
+    </style>
+</head>
+<body>
+<div class="content-wrapper">
+    <h1 class="centered-title">Тестовый фронт для Taxes API</h1>
+
+    <div class="dashboard">
+        <!-- Карточка баланса -->
+        <div class="card">
+            <h3 class="centered-title">Баланс:</h3>
+            <p>Доходы: <span id="income-val">0</span> ₽</p>
+            <p>Расходы: <span id="charge-val">0</span> ₽</p>
+            <p>Прибыль: <span id="profit-val">0</span> ₽</p>
+            <button onclick="refreshBalance()">Обновить баланс</button>
+        </div>
+
+        <!-- Стек: доход и расход -->
+        <div class="stack">
+
+            <div class="card">
+                <h3 class="centered-title">Движения по счету::</h3>
+                <input type="number" id="income-amount" placeholder="Сумма">
+                <button onclick="addIncome()">Добавить доход</button>
+            </div>
+            <div class="card">
+                <input type="number" id="charge-amount" placeholder="Сумма">
+                <button onclick="addCharge()">Добавить расход</button>
+            </div>
+        </div>
+
+        <!-- Выбор системы налогообложения -->
+        <div class="card">
+            <h3 class="centered-title">Выбор системы налогообложения:</h3>
+            <select id="tax-system-select">
+                <option value="EARNINGS">Только доходы (6%)</option>
+                <option value="EARNINGS_MINUS_SPENDINGS">Доходы минус расходы (15%)</option>
+            </select>
+            <button onclick="calculateSingleTax()">Выбрать СНО</button>
+            <div id="single-tax-result" style="margin-top:10px; color:#0066cc;"></div>
+        </div>
+
+        <!-- Сравнение СНО -->
+        <div class="card">
+            <h3>Рассчитать наиболее выгодную систему налогообложения:</h3>
+            <button onclick="compareTaxes()">Сравнить СНО</button>
+            <div id="tax-result" style="margin-top:10px;"></div>
+        </div>
+
+        <!-- ЛОГ: теперь это просто ещё одна карточка слева внизу -->
+        <div class="card log-block">
+            <h3>Лог запросов:</h3>
+            <div id="log">Ожидание...</div>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_BASE = '/api';
+
+    function log(msg) {
+        const now = new Date().toLocaleTimeString();
+        const logDiv = document.getElementById('log');
+        logDiv.textContent += `[${now}] ${msg}\n`;
+        logDiv.scrollTop = logDiv.scrollHeight; // автопрокрутка вниз
+    }
+
+    async function apiPost(path, body) {
+        log(`POST ${path}`);
+        try {
+            const res = await fetch(`${API_BASE}${path}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            return await res.json();
+        } catch (e) {
+            log('Ошибка: ' + e.message);
+            throw e;
+        }
+    }
+
+    async function apiGet(path) {
+        log(`GET ${path}`);
+        const res = await fetch(`${API_BASE}${path}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    }
+
+    async function refreshBalance() {
+        try {
+            const data = await apiGet('/balance');
+            document.getElementById('income-val').textContent = data.income;
+            document.getElementById('charge-val').textContent = data.charge;
+            document.getElementById('profit-val').textContent = data.profit;
+            log('Баланс обновлён');
+        } catch (e) {
+            log('Не удалось обновить баланс');
+        }
+    }
+
+    async function addIncome() {
+        const val = parseInt(document.getElementById('income-amount').value, 10);
+        if (isNaN(val) || val <= 0) {
+            alert('Введите положительное число');
+            return;
+        }
+        await apiPost('/incomes', {amount: val});
+        refreshBalance();
+        document.getElementById('income-amount').value = '';
+    }
+
+    async function addCharge() {
+        const val = parseInt(document.getElementById('charge-amount').value, 10);
+        if (isNaN(val) || val <= 0) {
+            alert('Введите положительное число');
+            return;
+        }
+        await apiPost('/charges', {amount: val});
+        refreshBalance();
+        document.getElementById('charge-amount').value = '';
+    }
+
+    async function compareTaxes() {
+        try {
+            const data = await apiGet('/taxes/comparison');
+            const msg = `${data.message} (УСН 15%: ${data.taxEarningsMinusSpendings} ₽, УСН 6%: ${data.taxEarnings} ₽)`;
+            document.getElementById('tax-result').textContent = msg;
+            log('Сравнение налогов получено');
+        } catch (e) {
+            log('Не удалось получить сравнение налогов');
+        }
+    }
+
+    async function calculateSingleTax() {
+        const select = document.getElementById('tax-system-select');
+        const systemValue = select.value;
+        const label = select.options[select.selectedIndex].text;
+
+        try {
+            const data = await apiGet(`/taxes?system=${systemValue}`);
+            const msg = `Налог по системе "${label}": ${data.amount} ₽`;
+            document.getElementById('single-tax-result').textContent = msg;
+            log(`Расчёт для ${label}: ${data.amount} ₽`);
+        } catch (e) {
+            log('Не удалось рассчитать налог для одной системы');
+        }
+    }
+</script>
+</body>
+</html>
